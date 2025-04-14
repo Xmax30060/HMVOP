@@ -78,18 +78,18 @@ void draw() {
       image(video, -width/2, 0, width/2, height/2);
       popMatrix();
     }
-    
-    // Skin detection and hand tracking
-    PImage skinMask = createSkinMask();
-    
     // Load the skin mask into OpenCV for contour detection
-    opencv.loadImage(skinMask);
+    PImage skinMask = createSkinMask();
+    PImage pinkMask = createPinkMask(0.3);
+    PImage filledPink = fillPinkMask(pinkMask); // 🧠 remplissage du contour
+    PImage combinedMask = combineMasks(video, skinMask, skinMask); // 🧩 fusion
     
-    // Contour detection
-    ArrayList<Contour> contours = opencv.findContours();
+    opencv.loadImage(combinedMask);
+    ArrayList<Contour> contours = opencv.findContours(true, true);
+
 
     if (contours.size() > 0) {
-      Contour handContour = findLargestContour(contours);
+      Contour handContour = findLargestContour(contours,200);
 
       if (handContour != null) {
         Rectangle r = handContour.getBoundingBox();
@@ -116,13 +116,13 @@ void draw() {
           translate(-width/2, 0);
           noFill();
           stroke(0, 255, 0);
-          handContour.draw();
-          
+          handContour.draw();          
           fill(255, 0, 0);
           ellipse(handPosition.x, handPosition.y, 10, 10);
           popMatrix();
           image(skinMask, width/2, 0, width/2, height/2);                  
-          image(createPinkMask(1), width/2, height/2, width/2, height/2);
+          image(createPinkMask(0.3), width/2, height/2, width/2, height/2);
+          image(combinedMask, 0, height/2, width/2, height/2);
           stroke(255);
           noFill();
           rect(width/2, height/2, width/2, height/2);
@@ -176,6 +176,114 @@ void draw() {
   }
   frameCount++;
 }
+PImage fillPinkMask(PImage pinkMask) {
+  OpenCV pinkCV = new OpenCV(this, pinkMask);
+  pinkCV.loadImage(pinkMask);
+  
+  // Trouve les contours dans le masque rose
+  ArrayList<Contour> contours = pinkCV.findContours(true, true);
+  
+  PGraphics filled = createGraphics(pinkMask.width, pinkMask.height);
+  filled.beginDraw();
+  filled.background(0);  // fond noir
+
+  // Remplir l'intérieur des contours trouvés
+  filled.fill(255);  // couleur blanche pour l'intérieur du contour
+  filled.noStroke();
+  
+  // Parcours de tous les contours pour dessiner leur intérieur
+  for (Contour contour : contours) {
+    ArrayList<PVector> points = contour.getPoints();  // récupère tous les points du contour
+    if (points.size() > 2) {  // assure que le contour a au moins 3 points pour former une forme fermée
+      filled.beginShape();
+      for (PVector point : points) {
+        filled.vertex(point.x, point.y);  // trace chaque point du contour
+      }
+      filled.endShape(CLOSE);  // ferme la forme
+    }
+  }
+
+  filled.endDraw();
+  return filled.get();  // retourne l'image remplie du contour
+}
+
+
+PImage combineMasks(PImage skin, PImage pink, PImage skinMask) {
+  // Crée le masque pink rempli
+  PImage filledPink = fillPinkMask(pink); // Assure-toi que la fonction fillPinkMask() est appelée ici
+  
+  PImage result = createImage(skinMask.width, skinMask.height, RGB);
+  
+  skinMask.loadPixels();
+  filledPink.loadPixels();
+  result.loadPixels();
+
+  // Parcours les pixels et combine les masques
+  for (int i = 0; i < skinMask.pixels.length; i++) {
+    float bSkin = brightness(skinMask.pixels[i]);
+    float bPink = brightness(filledPink.pixels[i]);
+
+    // Si un des deux masques est clair (détecte la main ou la peau), on le met dans le résultat
+    if (bSkin > 128 || bPink > 128) {
+      result.pixels[i] = color(255); // main détectée
+    } else {
+      result.pixels[i] = color(0);  // sinon, noir
+    }
+  }
+
+  result.updatePixels();
+  return result;
+}
+
+
+
+PVector detectColorPoint() {
+  PImage pinkMask = createPinkMask(0.3);
+  pinkMask.loadPixels();
+  
+  int step = 4; // Échantillonnage pour performance
+  int zoneSize = 5; // Taille du voisinage (carré zoneSize x zoneSize)
+  int whiteThreshold = 200; // Seuil de détection : combien de pixels blancs doivent être dans le voisinage
+
+  PVector bestPoint = null;
+  int bestY = height;
+
+  for (int y = zoneSize; y < pinkMask.height - zoneSize; y += step) {
+    for (int x = zoneSize; x < pinkMask.width - zoneSize; x += step) {
+      int whiteCount = 0;
+
+      for (int dy = -zoneSize; dy <= zoneSize; dy++) {
+        for (int dx = -zoneSize; dx <= zoneSize; dx++) {
+          int px = x + dx;
+          int py = y + dy;
+          if (px >= 0 && px < pinkMask.width && py >= 0 && py < pinkMask.height) {
+            color c = pinkMask.pixels[py * pinkMask.width + px];
+            if (brightness(c) > 200) { // Blanc détecté
+              whiteCount++;
+            }
+          }
+        }
+      }
+
+      // Si le nombre de pixels blancs dans la zone dépasse le seuil
+      if (whiteCount >= whiteThreshold && y < bestY) {
+        bestPoint = new PVector((float)x / pinkMask.width * width, 
+                                (float)y / pinkMask.height * height);
+        bestY = y;
+      }
+    }
+  }
+
+  // Affiche un point si trouvé
+  if (bestPoint != null) {
+    fill(255, 0, 255);
+    noStroke();
+    ellipse(bestPoint.x, bestPoint.y, 20, 20);
+  }
+
+  return bestPoint;
+}
+
 PImage createPinkMask(float tolerance) {
   PImage mask = createImage(video.width, video.height, RGB);
   video.loadPixels();
@@ -264,21 +372,23 @@ PImage createSkinMask() {
   return opencv.getOutput();
 }
 
-Contour findLargestContour(ArrayList<Contour> contours) {
-  if (contours.isEmpty()) return null;
+Contour findLargestContour(ArrayList<Contour> contours, float minArea) {
+  if (contours == null || contours.isEmpty()) return null;
   
-  Contour largest = contours.get(0);
+  Contour largest = null;
+  float maxArea = 0;
+
   for (Contour c : contours) {
-    if (c.area() > largest.area()) {
+    float area = c.area();
+    if (area > minArea && area > maxArea) {
       largest = c;
+      maxArea = area;
     }
   }
   
-  // Increase minimum area to avoid small noise
-  if (largest.area() < 3000) return null;
-  
-  return largest;
+  return largest; // Peut être null si aucun contour assez grand
 }
+
 
 void detectClicks(Contour handContour) {
   try {
@@ -398,30 +508,7 @@ void detectClicks(Contour handContour) {
   }
 }
 
-PVector detectColorPoint() {
-  PVector highestPoint = null;
-  int step = 5; // échantillonnage pour perf
- //visualise pink marquer 
-  color targetColor = color(255, 0, 255); // Rouge
-  float colorThreshold = 80.0;
-  PVector colorPoint = null;
-  int stepSize = 5; // Pour alléger le traitement
-  
 
-  for (int y = 0; y < height; y += step) {
-    for (int x = 0; x < width; x += step) {
-      color c = get(x, y);
-      float d = dist(red(c), green(c), blue(c), red(targetColor), green(targetColor), blue(targetColor));
-      if (d < colorThreshold) {
-        if (highestPoint == null || y < highestPoint.y) {
-          highestPoint = new PVector(x, y);
-        }
-      }
-    }
-  }
-
-  return highestPoint;
-}
 
 
 
