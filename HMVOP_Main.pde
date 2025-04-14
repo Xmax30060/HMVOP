@@ -33,6 +33,13 @@ PVector indexTip = new PVector();
 PVector prevIndexTip = new PVector();
 boolean clickReady = false;
 boolean indexUp = false;
+// configuraiton test
+boolean testMode = false;
+int testStartTime = 0;
+int testDuration = 5000; // Durée du test (ms) : 5 secondes
+PVector testStartClick = null;
+PVector testStartColor = null;
+
 
 
 void setup() {
@@ -49,6 +56,8 @@ void setup() {
   } catch (Exception e) {
     println("Could not initialize Robot: " + e.getMessage());
   }
+  
+
 }
 
 void draw() {
@@ -66,7 +75,7 @@ void draw() {
     if (showVideo) {
       pushMatrix();
       scale(-1, 1);
-      //image(video, -width/2, 0, width/2, height/2);
+      image(video, -width/2, 0, width/2, height/2);
       popMatrix();
     }
     
@@ -112,9 +121,11 @@ void draw() {
           fill(255, 0, 0);
           ellipse(handPosition.x, handPosition.y, 10, 10);
           popMatrix();
-          
-          // Display the skin mask for debugging only if showVideo is true
-          //image(skinMask, width/2, 0, width/2, height/2);
+          image(skinMask, width/2, 0, width/2, height/2);                  
+          image(createPinkMask(1), width/2, height/2, width/2, height/2);
+          stroke(255);
+          noFill();
+          rect(width/2, height/2, width/2, height/2);
         }
 
         // Map hand position to screen coordinates
@@ -156,9 +167,49 @@ void draw() {
 
     displayMetrics();
   }
-
+  // 🎨 Détection couleur indépendante
+  PVector colorPoint = detectColorPoint();
+  if (colorPoint != null) {
+    fill(255, 0, 255);
+    noStroke();
+    ellipse(colorPoint.x, colorPoint.y, 20, 20);
+  }
   frameCount++;
 }
+PImage createPinkMask(float tolerance) {
+  PImage mask = createImage(video.width, video.height, RGB);
+  video.loadPixels();
+  mask.loadPixels();
+
+  // Teinte cible (rose fluo)
+  float targetHue = 225;  // Cible la couleur rose fluo
+
+  // Plages dynamiques autour de la teinte cible
+  float hueMin = targetHue - 30 * tolerance;
+  float hueMax = targetHue + 30 * tolerance;
+
+  for (int i = 0; i < video.pixels.length; i++) {
+    color c = video.pixels[i];
+
+    colorMode(HSB, 255);
+    float h = hue(c);  // Récupère la teinte
+    colorMode(RGB, 255);
+
+    // Détecte seulement la teinte rose avec un facteur de tolérance
+    if (h >= hueMin && h <= hueMax) {
+      mask.pixels[i] = color(255);  // Blanc pour détecter le rose
+    } else {
+      mask.pixels[i] = color(0);    // Noir sinon
+    }
+  }
+
+  mask.updatePixels();
+  return mask;
+}
+
+
+
+
 
 PImage createSkinMask() {
   // Create a new mask image
@@ -321,9 +372,12 @@ void detectClicks(Contour handContour) {
       if (distanceFromCenter > liftThreshold) {
         indexUp = true;
       }
-
-      // Visualisation
+     
+      
       pushMatrix();
+      
+      // Visualisation
+      
       scale(-1, 1);
       translate(-width / 2, 0);
       fill(indexUp ? color(0, 0, 255) : color(0, 255, 0));
@@ -344,6 +398,30 @@ void detectClicks(Contour handContour) {
   }
 }
 
+PVector detectColorPoint() {
+  PVector highestPoint = null;
+  int step = 5; // échantillonnage pour perf
+ //visualise pink marquer 
+  color targetColor = color(255, 0, 255); // Rouge
+  float colorThreshold = 80.0;
+  PVector colorPoint = null;
+  int stepSize = 5; // Pour alléger le traitement
+  
+
+  for (int y = 0; y < height; y += step) {
+    for (int x = 0; x < width; x += step) {
+      color c = get(x, y);
+      float d = dist(red(c), green(c), blue(c), red(targetColor), green(targetColor), blue(targetColor));
+      if (d < colorThreshold) {
+        if (highestPoint == null || y < highestPoint.y) {
+          highestPoint = new PVector(x, y);
+        }
+      }
+    }
+  }
+
+  return highestPoint;
+}
 
 
 
@@ -382,6 +460,11 @@ void keyPressed() {
   } else if (key == 'm' || key == 'M') {
     // Toggle mouse control
     controlMouse = !controlMouse;
+  }
+   if (key == 't') { // Appuyer sur "t" pour démarrer le test
+    println("🧪 Mode test activé : placez votre main sur la souris !");
+    testMode = true;
+    testStartTime = millis();
   }
 }
 class Finger {
